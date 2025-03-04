@@ -1,0 +1,192 @@
+---
+title: "DEG group comparison analysis for Alzheimer's"
+Author: "Tazeen Shaukat"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+# Project: DEG Analysis on gene expression data of patients in different stages of Alzheimer's Disease.
+
+#### Purpose: To find out what are the significant differences of gene expression between groups of subjects at various stages of the disease.
+
+#### Team 4: My team is tasked with comparing moderate group vs. incipient group and sever group vs. moderate group.
+
+### *This file contains analysis between gene expression data of moderate group and incipient group of patients.*
+
+### 1a - Read in clinical data
+
+```{r}
+#30 patients
+clinData <- read.csv(file = "input/Blalock_clin_final.csv", header = T, stringsAsFactors = F, row.names = 1)
+
+
+head(clinData)
+knitr::kable(head(clinData), caption = "Clinical Data with rows as patients and attributes as columns")
+```
+
+### Checking the shape and overall information about the clinical dataset
+
+```{r}
+dim(clinData)
+
+```
+
+### 1b: Read in processed normalized gene expression data in log2 scale, includes gene annotation
+
+```{r}
+
+# Read in gene expression file - features (rows), 30 patients (columns)
+geneExp <- read.table(file = "input/GSE62232_Blalock_geneexp_final.tsv",
+                      sep="\t",
+                      row.names = 1,
+                      header = T, 
+                      stringsAsFactors = F)
+head(geneExp[1:5, 1:4])
+knitr::kable(head(geneExp), caption = "Processed gene expression data in log2 scale with gene annotation")
+```
+
+### Now lets combine the dataset using the Patient's GSMID as the unique identifier
+
+```{r}
+clinData$BIOSPECIMEN_ID # these are the identifiers in the clinical data 
+colnames(geneExp) # same identifiers in the gene exp data 
+
+matchingSamples = which(colnames(geneExp) %in% (clinData$BIOSPECIMEN_ID)) # 30 patients 
+matchingSamples
+subsetGeneExp <- geneExp[, matchingSamples]
+head(subsetGeneExp)
+```
+
+## Step 3 - Identifying the groups to be compared
+
+### Identifying the groups to be compared (Baseline and Comparison Grps)
+
+### In this case Baseline = Incipient and Comparison = Moderate
+
+```{r}
+# Labels (row numbers) that can identify the baseline group patients
+baselineGrpLabels <-  which(clinData$DISEASE_STATUS == "Incipient") #7 samples
+head(baselineGrpLabels)
+length(baselineGrpLabels)
+
+# Use the labels (row numbers) to subset baseline patients in clinical data file 
+clinBase <- clinData[baselineGrpLabels, ]
+clinBase
+
+# Labels (row numbers) that can identify the comp group patients
+compGrpLabels <- which(clinData$DISEASE_STATUS == "Moderate") #8 samples
+head(compGrpLabels)
+length(compGrpLabels)
+
+# Use the labels (row numbers) to subset comp patients in clinical data file 
+clinComp <- clinData[compGrpLabels, ]
+clinComp
+
+#### Use the clinBase and clinComp objects to subset gene expression data
+geneExpBase <- subsetGeneExp[, clinBase$BIOSPECIMEN_ID] # 43135 feature (rows), 7 samples columns
+geneExpComp <- subsetGeneExp[, clinComp$BIOSPECIMEN_ID] # 43135 feature (rows), 8 samples columns
+
+head(geneExpBase)
+head(geneExpComp)
+```
+
+## Step 4: Sanity check
+
+-   See if filtering of clinical data in R matches filtering of clinical data in excel
+-   See if sample ids in clinical data match sample ids in gene exp data (if they don't match it means your step 1 and/or 2 is wrong)
+-   Verify you see correct number of samples in baseline and comp groups
+-   Export the column names from gene expression data to see if it contains only probe/gene names and no other garbage
+
+```{r}
+#See if sample ids in clinical data match sample ids in gene exp data
+clinBase$BIOSPECIMEN_ID == colnames(geneExpBase)
+clinComp$BIOSPECIMEN_ID == colnames(geneExpComp)
+
+### Checking if the samples IDs baseline and comp groups are the same ---- can put these in an excel to see if IDs match
+write.table(clinBase$BIOSPECIMEN_ID , file = "sanity/Tazeen_ClinBaseIDs.tsv", sep="\t", quote = F  )
+write.table(clinComp$BIOSPECIMEN_ID , file = "sanity/Tazeen_ClinCompIDs.tsv", sep="\t", quote = F  )
+write.table(colnames(geneExpBase) , 
+            file = "sanity/Tazeen_GeneExpBaseIDs.tsv", 
+            sep="\t", quote = F  )
+write.table(colnames(geneExpComp) , 
+            file = "sanity/Tazeen_GeneExpCompIDs.tsv", 
+            sep="\t", quote = F  )
+
+#Export the features from gene expression data  
+#Open this file and check that it contains only probe/gene names and no other garbage
+write.table(rownames(geneExp),file = "Tazeen_FeatureIDs.tsv", sep="\t", quote = F  )
+```
+
+## Step 5: Preparing data for T-test
+
+-   Molecular data must have features (genes in this case) as rows, and samples as columns.
+-   Transpose data (if needed) to obtain this
+-   Objects must be data frame
+-   Numeric data only
+
+```{r}
+### Checking to make sure data is a numeric data frame
+knitr::kable(head(geneExpBase[1:5,1:4]))
+knitr::kable(head(geneExpComp[1:5,1:4]))
+```
+
+#### Function for T-test
+
+```{r ttest}
+source("fnTTest.R")
+
+#### Call T-test function
+results1 = fnTTest(baseGroup = geneExpBase, 
+                   compGroup = geneExpComp, 
+                   testName = "Tazeen_TTest_", 
+                   baseGroupName = "Incipient",
+                   compGroupName =  "Moderate",
+                   folderName = "output")
+```
+
+## Final Step - Sub-set top differentially expressed genes
+
+```{r}
+#Read in the T-Test results file
+
+ttestResults <- read.csv(file = "output/Tazeen_TTest__Moderate_(Comp).vs._Incipient_(Base).TTest.csv")
+
+#check to make sure p-value column is imported as numeric 
+#sort by p-value (just in case the results are not sorted by p-value)
+
+ttestResultsSorted <- dplyr::arrange(ttestResults, Pvalue)
+
+#find rows with p-value < 0.01
+whichSig <- which(ttestResultsSorted$Pvalue <= 0.01) 
+
+#Short list sig results
+ttestResultsSig <- ttestResultsSorted[whichSig, ] #1789 rows 
+
+### Export short listed results
+write.table(x = ttestResultsSig, 
+            file = "output/Tazeen_Moderate_Incipient_Ttest_Shortlisted.csv", 
+            quote = F, sep = ",")
+
+##### First column is a list of features in thsi format : ProbeID|GeneName. 
+#### Use string split strsplit() function to extract gene names
+funcSplit <- function(featureX) {
+  f1 <- unlist(strsplit(x = featureX, split = "|", fixed = TRUE))
+  f2 <- f1[2]
+  return(f2)
+}
+
+# Use apply() function to run the split on every row, its faster version of a loop
+geneNames1 <- apply(X = as.matrix(ttestResultsSig$Feature), 
+                    MARGIN = 1, FUN = funcSplit)
+
+head(geneNames1)
+
+#print length of short listed gene names
+length(geneNames1)
+
+### Export list of gene names
+write.table(x = geneNames1, 
+            file = "output/Tazeen_Moderate_Incipient_SigDiffExpressedGenes.csv", 
+            quote = F, sep = ",")
+```
